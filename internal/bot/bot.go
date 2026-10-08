@@ -1,0 +1,118 @@
+package bot
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"ZaViBiS/dont-worry-about-this-repo/internal/config"
+	"ZaViBiS/dont-worry-about-this-repo/internal/db"
+
+	"github.com/gorilla/websocket"
+	"github.com/rs/zerolog/log"
+)
+
+type update struct {
+	Envelope struct {
+		Source      string `json:"source"`
+		DataMessage *struct {
+			Message string `json:"message"`
+		} `json:"dataMessage"`
+	} `json:"envelope"`
+}
+
+func send(api, number, to, text string) error {
+	body, _ := json.Marshal(map[string]any{
+		"message":    text,
+		"number":     number,
+		"recipients": []string{to},
+	})
+	resp, err := http.Post("http://"+api+"/v2/send", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("send status code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// Run підключається до Signal API та обробляє вхідні повідомлення.
+// Внутрішній цикл автоматично перепідключається при обриві зв'язку з логуванням помилок.
+// Повертає помилку лише при скасуванні контексту або неможливості продовжити роботу.
+func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
+	berlinLoc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		return fmt.Errorf("load Europe/Berlin timezone: %w", err)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		wsURL := "ws://" + cfg.SignalAPI + "/v1/receive/" + cfg.SignalPhoneNumber
+		log.Info().Str("url", wsURL).Msg("connecting to Signal websocket")
+
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+		if err != nil {
+			log.Error().Err(err).Msg("websocket dial error, retrying in 5s")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+				continue
+			}
+		}
+
+		log.Info().Msg("connected to Signal websocket, listening for updates")
+
+		readDone := make(chan error, 1)
+		go func() {
+			for {
+				var u update
+				if err := conn.ReadJSON(&u); err != nil {
+					readDone <- fmt.Errorf("read json: %w", err)
+					return
+				}
+				if m := u.Envelope.DataMessage; m != nil && m.Message != "" {
+					log.Info().Str("from", u.Envelope.Source).Str("msg", m.Message).Msg("received message")
+
+					record, err := db.Add(ctx, database)
+					if err != nil {
+						log.Error().Err(err).Msg("failed to insert record into db")
+					}
+
+					berlinTime := record.Timestamp.In(berlinLoc).Format("2006-01-02 15:04:05")
+					text := fmt.Sprintf("запис: %d, час: %s", record.ID, berlinTime)
+					if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, text); err != nil {
+						log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send reply")
+					}
+				}
+			}
+		}()
+
+		select {
+		case <-ctx.Done():
+			conn.Close()
+			return ctx.Err()
+		case err := <-readDone:
+			conn.Close()
+			log.Warn().Err(err).Msg("websocket connection closed, reconnecting in 5s")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+}

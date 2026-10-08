@@ -1,0 +1,23 @@
+# docker-compose.yml
+services:
+  signal-api:
+    image: bbernhard/signal-cli-rest-api
+    environment:
+      - MODE=json-rpc
+      - LOG_LEVEL=debug
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./signal-data:/home/.local/share/signal-cli
+
+  bot:
+    build: .
+    volumes:
+      - ./bot-data:/data
+    environment:
+      - SIGNAL_API=signal-api:8080
+      - SIGNAL_NUMBER=+49XXXXXXXXXX
+    depends_on:
+      - signal-api
+    restart: unless-stopped
+
