@@ -3,7 +3,6 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN apk add make
 RUN CGO_ENABLED=0 go build -o /bot ./cmd/bot
 
 FROM gcr.io/distroless/static-debian12
