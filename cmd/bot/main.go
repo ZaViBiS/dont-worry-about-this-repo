@@ -30,7 +30,9 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("db init")
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

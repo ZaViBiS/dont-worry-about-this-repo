@@ -44,3 +44,28 @@ func Add(ctx context.Context, db *sql.DB) (Record, error) {
 
 	return rec, nil
 }
+
+// GetAll повертає всі записи з бази даних, відсортовані за часом.
+func GetAll(ctx context.Context, db *sql.DB) ([]Record, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, timestamp FROM records ORDER BY timestamp ASC, id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query records: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var records []Record
+	for rows.Next() {
+		var rec Record
+		if err := rows.Scan(&rec.ID, &rec.Timestamp); err != nil {
+			return nil, fmt.Errorf("scan record: %w", err)
+		}
+		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate records: %w", err)
+	}
+
+	return records, nil
+}

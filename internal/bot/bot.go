@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,17 +26,27 @@ type update struct {
 	} `json:"envelope"`
 }
 
-func send(api, number, to, text string) error {
-	body, _ := json.Marshal(map[string]any{
+func send(api, number, to, text string, base64Attachments ...string) error {
+	payload := map[string]any{
 		"message":    text,
 		"number":     number,
 		"recipients": []string{to},
-	})
+	}
+	if len(base64Attachments) > 0 {
+		payload["base64_attachments"] = base64Attachments
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal send payload: %w", err)
+	}
+
 	resp, err := http.Post("http://"+api+"/v2/send", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		return fmt.Errorf("send status code: %d", resp.StatusCode)
@@ -87,26 +98,59 @@ func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
 				if m := u.Envelope.DataMessage; m != nil && m.Message != "" {
 					log.Info().Str("from", u.Envelope.Source).Str("msg", m.Message).Msg("received message")
 
-					record, err := db.Add(ctx, database)
-					if err != nil {
-						log.Error().Err(err).Msg("failed to insert record into db")
+					switch m.Message {
+					case "stat":
+						records, err := db.GetAll(ctx, database)
+						if err != nil {
+							log.Error().Err(err).Msg("failed to get records for stat")
+							if sendErr := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "Помилка отримання даних з бази"); sendErr != nil {
+								log.Error().Err(sendErr).Msg("failed to send reply")
+							}
+							continue
+						}
+						if len(records) == 0 {
+							if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "Немає записів для побудови статистики."); err != nil {
+								log.Error().Err(err).Msg("failed to send reply")
+							}
+							continue
+						}
+
+						chartPNG, err := generateChart(records, berlinLoc)
+						if err != nil {
+							log.Error().Err(err).Msg("failed to generate chart")
+							if sendErr := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "Помилка побудови графіка"); sendErr != nil {
+								log.Error().Err(sendErr).Msg("failed to send reply")
+							}
+							continue
+						}
+
+						encodedChart := "data:image/png;base64," + base64.StdEncoding.EncodeToString(chartPNG)
+						caption := fmt.Sprintf("Статистика (всього записів: %d)", len(records))
+						if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, caption, encodedChart); err != nil {
+							log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send chart reply")
+						}
+					default:
+						record, err := db.Add(ctx, database)
+						if err != nil {
+							log.Error().Err(err).Msg("failed to insert record into db")
+						}
+						berlinTime := record.Timestamp.In(berlinLoc).Format("2006-01-02 15:04:05")
+						text := fmt.Sprintf("запис: %d, час: %s", record.ID, berlinTime)
+						if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, text); err != nil {
+							log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send reply")
+						}
 					}
 
-					berlinTime := record.Timestamp.In(berlinLoc).Format("2006-01-02 15:04:05")
-					text := fmt.Sprintf("запис: %d, час: %s", record.ID, berlinTime)
-					if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, text); err != nil {
-						log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send reply")
-					}
 				}
 			}
 		}()
 
 		select {
 		case <-ctx.Done():
-			conn.Close()
+			_ = conn.Close()
 			return ctx.Err()
 		case err := <-readDone:
-			conn.Close()
+			_ = conn.Close()
 			log.Warn().Err(err).Msg("websocket connection closed, reconnecting in 5s")
 			select {
 			case <-ctx.Done():
