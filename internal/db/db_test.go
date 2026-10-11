@@ -66,4 +66,31 @@ func TestDBInitAndOperations(t *testing.T) {
 	if records[0].ID != 1 || records[1].ID != 2 {
 		t.Fatalf("unexpected record IDs: %v", records)
 	}
+
+	// Delete record 1
+	deleted, err := Delete(ctx, database, 1)
+	if err != nil {
+		t.Fatalf("Delete record 1 failed: %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected record 1 to be deleted")
+	}
+
+	// Verify only record 2 remains
+	records, err = GetAll(ctx, database)
+	if err != nil {
+		t.Fatalf("GetAll after delete failed: %v", err)
+	}
+	if len(records) != 1 || records[0].ID != 2 {
+		t.Fatalf("expected only record 2, got %v", records)
+	}
+
+	// Attempt to delete already deleted record 1
+	deleted, err = Delete(ctx, database, 1)
+	if err != nil {
+		t.Fatalf("Delete non-existing record failed: %v", err)
+	}
+	if deleted {
+		t.Fatal("expected false for non-existing record")
+	}
 }

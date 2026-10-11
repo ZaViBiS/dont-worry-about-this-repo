@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"ZaViBiS/dont-worry-about-this-repo/internal/config"
@@ -98,8 +100,9 @@ func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
 				if m := u.Envelope.DataMessage; m != nil && m.Message != "" {
 					log.Info().Str("from", u.Envelope.Source).Str("msg", m.Message).Msg("received message")
 
-					switch m.Message {
-					case "stat":
+					trimmedMsg := strings.TrimSpace(m.Message)
+					switch {
+					case trimmedMsg == "stat":
 						records, err := db.GetAll(ctx, database)
 						if err != nil {
 							log.Error().Err(err).Msg("failed to get records for stat")
@@ -128,6 +131,41 @@ func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
 						caption := fmt.Sprintf("Статистика (всього записів: %d)", len(records))
 						if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, caption, encodedChart); err != nil {
 							log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send chart reply")
+						}
+					case strings.HasPrefix(trimmedMsg, "del"):
+						parts := strings.Fields(trimmedMsg)
+						if len(parts) != 2 || parts[0] != "del" {
+							if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "вкажіть id запису: 'del <id>'"); err != nil {
+								log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send reply")
+							}
+							continue
+						}
+
+						id, err := strconv.ParseInt(parts[1], 10, 64)
+						if err != nil {
+							if sendErr := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "некоректний id запису"); sendErr != nil {
+								log.Error().Err(sendErr).Str("to", u.Envelope.Source).Msg("failed to send reply")
+							}
+							continue
+						}
+
+						deleted, err := db.Delete(ctx, database, id)
+						if err != nil {
+							log.Error().Err(err).Int64("id", id).Msg("failed to delete record")
+							if sendErr := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "помилка видалення запису"); sendErr != nil {
+								log.Error().Err(sendErr).Str("to", u.Envelope.Source).Msg("failed to send reply")
+							}
+							continue
+						}
+
+						var reply string
+						if deleted {
+							reply = fmt.Sprintf("запис %d видалено", id)
+						} else {
+							reply = fmt.Sprintf("запис %d не знайдено", id)
+						}
+						if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, reply); err != nil {
+							log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send reply")
 						}
 					default:
 						record, err := db.Add(ctx, database)

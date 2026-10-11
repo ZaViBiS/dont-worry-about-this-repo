@@ -69,3 +69,18 @@ func GetAll(ctx context.Context, db *sql.DB) ([]Record, error) {
 
 	return records, nil
 }
+
+// Delete видаляє запис з бази даних за його id. Повертає true, якщо запис було знайдено і видалено.
+func Delete(ctx context.Context, db *sql.DB, id int64) (bool, error) {
+	res, err := db.ExecContext(ctx, `DELETE FROM records WHERE id = ?`, id)
+	if err != nil {
+		return false, fmt.Errorf("delete record %d: %w", id, err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+
+	return rowsAffected > 0, nil
+}
