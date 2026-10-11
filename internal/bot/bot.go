@@ -101,8 +101,15 @@ func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
 					log.Info().Str("from", u.Envelope.Source).Str("msg", m.Message).Msg("received message")
 
 					trimmedMsg := strings.TrimSpace(m.Message)
-					switch {
-					case trimmedMsg == "stat":
+					normalized := strings.TrimPrefix(trimmedMsg, "/")
+					fields := strings.Fields(normalized)
+					var command string
+					if len(fields) > 0 {
+						command = strings.ToLower(fields[0])
+					}
+
+					switch command {
+					case "stat":
 						records, err := db.GetAll(ctx, database)
 						if err != nil {
 							log.Error().Err(err).Msg("failed to get records for stat")
@@ -132,18 +139,17 @@ func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
 						if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, caption, encodedChart); err != nil {
 							log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send chart reply")
 						}
-					case strings.HasPrefix(trimmedMsg, "del"):
-						parts := strings.Fields(trimmedMsg)
-						if len(parts) != 2 || parts[0] != "del" {
+					case "del":
+						if len(fields) != 2 {
 							if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "вкажіть id запису: 'del <id>'"); err != nil {
 								log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send reply")
 							}
 							continue
 						}
 
-						id, err := strconv.ParseInt(parts[1], 10, 64)
+						id, err := strconv.ParseInt(fields[1], 10, 64)
 						if err != nil {
-							if sendErr := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "некоректний id запису"); sendErr != nil {
+							if sendErr := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "некоректний id запису: очікується число"); sendErr != nil {
 								log.Error().Err(sendErr).Str("to", u.Envelope.Source).Msg("failed to send reply")
 							}
 							continue
