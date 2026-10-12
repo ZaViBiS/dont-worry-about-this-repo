@@ -143,12 +143,7 @@ func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
 						}
 
 						encodedChart := "data:image/png;base64," + base64.StdEncoding.EncodeToString(chartPNG)
-						var caption string
-						if label == "останній місяць" {
-							caption = fmt.Sprintf("Статистика за останній місяць (всього записів: %d)", totalInPeriod)
-						} else {
-							caption = fmt.Sprintf("Статистика за %s (всього записів: %d)", label, totalInPeriod)
-						}
+						caption := fmt.Sprintf("Статистика за %s (всього записів: %d)", label, totalInPeriod)
 						if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, caption, encodedChart); err != nil {
 							log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send chart reply")
 						}

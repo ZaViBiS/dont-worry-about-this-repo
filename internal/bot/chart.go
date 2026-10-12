@@ -76,16 +76,9 @@ func parseDateRange(args []string, now time.Time, loc *time.Location, records []
 	currMonth := nowInLoc.Month()
 
 	if len(args) == 0 {
-		nowDate := truncateToDay(now, loc)
-		endDate := nowDate
-		if len(records) > 0 {
-			lastDate := truncateToDay(records[len(records)-1].Timestamp, loc)
-			if lastDate.After(endDate) {
-				endDate = lastDate
-			}
-		}
-		startDate := endDate.AddDate(0, 0, -29)
-		return startDate, endDate, "останній місяць", nil
+		startDate := time.Date(currYear, currMonth, 1, 0, 0, 0, 0, loc)
+		endDate := startDate.AddDate(0, 1, -1)
+		return startDate, endDate, ukrMonthNames[currMonth], nil
 	}
 
 	var targetMonth time.Month
@@ -169,12 +162,8 @@ func generateChart(records []db.Record, loc *time.Location, timeRange ...time.Ti
 			return nil, 0, fmt.Errorf("no records to generate chart")
 		}
 		nowDate := truncateToDay(time.Now(), loc)
-		endDate = nowDate
-		lastDate := truncateToDay(records[len(records)-1].Timestamp, loc)
-		if lastDate.After(endDate) {
-			endDate = lastDate
-		}
-		startDate = endDate.AddDate(0, 0, -29)
+		startDate = time.Date(nowDate.Year(), nowDate.Month(), 1, 0, 0, 0, 0, loc)
+		endDate = startDate.AddDate(0, 1, -1)
 	}
 
 	counts := make(map[string]int)

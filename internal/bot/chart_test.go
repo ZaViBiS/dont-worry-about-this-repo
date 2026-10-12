@@ -20,9 +20,10 @@ func TestGenerateChart(t *testing.T) {
 		}
 	})
 
-	t.Run("single record renders successfully for last month (30 days)", func(t *testing.T) {
+	t.Run("single record renders successfully for full month", func(t *testing.T) {
+		now := time.Now().In(loc)
 		records := []db.Record{
-			{ID: 1, Timestamp: time.Now()},
+			{ID: 1, Timestamp: time.Date(now.Year(), now.Month(), 15, 12, 0, 0, 0, loc)},
 		}
 		data, total, err := generateChart(records, loc)
 		if err != nil {
@@ -36,14 +37,13 @@ func TestGenerateChart(t *testing.T) {
 		}
 	})
 
-	t.Run("multiple records across days renders successfully", func(t *testing.T) {
-		now := time.Now()
+	t.Run("records in current month counted, records outside current month ignored", func(t *testing.T) {
+		now := time.Now().In(loc)
 		records := []db.Record{
-			{ID: 1, Timestamp: now.Add(-5 * 24 * time.Hour)},
-			{ID: 2, Timestamp: now.Add(-3 * 24 * time.Hour)},
-			{ID: 3, Timestamp: now.Add(-3 * 24 * time.Hour)},
-			{ID: 4, Timestamp: now.Add(-1 * 24 * time.Hour)},
-			{ID: 5, Timestamp: now},
+			{ID: 1, Timestamp: time.Date(now.Year(), now.Month(), 1, 10, 0, 0, 0, loc)},
+			{ID: 2, Timestamp: time.Date(now.Year(), now.Month(), 5, 10, 0, 0, 0, loc)},
+			{ID: 3, Timestamp: time.Date(now.Year(), now.Month(), 20, 10, 0, 0, 0, loc)},
+			{ID: 4, Timestamp: time.Date(now.Year(), now.Month()-1, 20, 10, 0, 0, 0, loc)}, // previous month
 		}
 		data, total, err := generateChart(records, loc)
 		if err != nil {
@@ -52,28 +52,8 @@ func TestGenerateChart(t *testing.T) {
 		if len(data) == 0 {
 			t.Fatal("expected non-empty png bytes")
 		}
-		if total != 5 {
-			t.Fatalf("expected total 5, got %d", total)
-		}
-	})
-
-	t.Run("records spanning over 40 days renders successfully capped to 30 days", func(t *testing.T) {
-		now := time.Now()
-		records := []db.Record{
-			{ID: 1, Timestamp: now.Add(-40 * 24 * time.Hour)},
-			{ID: 2, Timestamp: now.Add(-10 * 24 * time.Hour)},
-			{ID: 3, Timestamp: now},
-		}
-		data, total, err := generateChart(records, loc)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(data) == 0 {
-			t.Fatal("expected non-empty png bytes")
-		}
-		// Record 1 (-40 days) is outside the 30-day window
-		if total != 2 {
-			t.Fatalf("expected total 2, got %d", total)
+		if total != 3 {
+			t.Fatalf("expected total 3, got %d", total)
 		}
 	})
 
@@ -107,21 +87,18 @@ func TestParseDateRange(t *testing.T) {
 
 	fixedNow := time.Date(2026, time.October, 12, 10, 0, 0, 0, loc)
 
-	t.Run("no args defaults to last 30 days", func(t *testing.T) {
+	t.Run("no args defaults to current full month (1st to last day)", func(t *testing.T) {
 		start, end, label, err := parseDateRange(nil, fixedNow, loc, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if label != "останній місяць" {
-			t.Errorf("expected label 'останній місяць', got '%s'", label)
+		if label != "жовтень" {
+			t.Errorf("expected label 'жовтень', got '%s'", label)
 		}
-		expectedEnd := time.Date(2026, time.October, 12, 0, 0, 0, 0, loc)
-		if !end.Equal(expectedEnd) {
-			t.Errorf("expected end date %v, got %v", expectedEnd, end)
-		}
-		expectedStart := expectedEnd.AddDate(0, 0, -29)
-		if !start.Equal(expectedStart) {
-			t.Errorf("expected start date %v, got %v", expectedStart, start)
+		expectedStart := time.Date(2026, time.October, 1, 0, 0, 0, 0, loc)
+		expectedEnd := time.Date(2026, time.October, 31, 0, 0, 0, 0, loc)
+		if !start.Equal(expectedStart) || !end.Equal(expectedEnd) {
+			t.Errorf("expected %v - %v, got %v - %v", expectedStart, expectedEnd, start, end)
 		}
 	})
 
