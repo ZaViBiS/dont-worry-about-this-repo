@@ -125,7 +125,15 @@ func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
 							continue
 						}
 
-						chartPNG, err := generateChart(records, berlinLoc)
+						startDate, endDate, label, err := parseDateRange(fields[1:], time.Now(), berlinLoc, records)
+						if err != nil {
+							if sendErr := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, err.Error()); sendErr != nil {
+								log.Error().Err(sendErr).Msg("failed to send reply")
+							}
+							continue
+						}
+
+						chartPNG, totalInPeriod, err := generateChart(records, berlinLoc, startDate, endDate)
 						if err != nil {
 							log.Error().Err(err).Msg("failed to generate chart")
 							if sendErr := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, "Помилка побудови графіка"); sendErr != nil {
@@ -135,7 +143,12 @@ func Run(ctx context.Context, database *sql.DB, cfg config.Config) error {
 						}
 
 						encodedChart := "data:image/png;base64," + base64.StdEncoding.EncodeToString(chartPNG)
-						caption := fmt.Sprintf("Статистика (всього записів: %d)", len(records))
+						var caption string
+						if label == "останній місяць" {
+							caption = fmt.Sprintf("Статистика за останній місяць (всього записів: %d)", totalInPeriod)
+						} else {
+							caption = fmt.Sprintf("Статистика за %s (всього записів: %d)", label, totalInPeriod)
+						}
 						if err := send(cfg.SignalAPI, cfg.SignalPhoneNumber, u.Envelope.Source, caption, encodedChart); err != nil {
 							log.Error().Err(err).Str("to", u.Envelope.Source).Msg("failed to send chart reply")
 						}
